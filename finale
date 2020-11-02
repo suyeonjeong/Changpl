@@ -1,0 +1,150 @@
+#include "HX711.h"
+#include <Keypad.h>
+#define DOUT 11
+#define CLK  12
+
+HX711 scale;
+
+float calibration_factor = 390; //-7050 worked for my 440lb max scale setup
+
+int numReadings = 6;
+float readings[6];   
+int readIndex = 0;              // the index of the current reading
+float total = 0;                  // the running total
+float average = 0;                // the average
+float targetWeight = 0;
+float difference = 0;
+int count = 0;
+
+float firstWarn = 0;
+float secondWarn = 0;
+float thirdWarn = 0;
+    
+const byte ROWS = 4; //four rows
+const byte COLS = 4; //four columns
+//define the cymbols on the buttons of the keypads
+char hexaKeys[ROWS][COLS] = {
+  {'1','2','3','A'},
+  {'4','5','6','B'},
+  {'7','8','9','C'},
+  {'*','0','#','D'}
+};
+byte rowPins[ROWS] = {9, 8, 7, 6}; // 행(Raw)가 연결된 아두이노 핀 번호
+byte colPins[COLS] = {5, 4, 3, 2}; // 열(column)가 연결된 아두이노 핀 번호
+
+//initialize an instance of class NewKeypad
+Keypad customKeypad = Keypad( makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS); 
+
+
+int speaker = 13;
+
+
+void setup() {
+  // put your setup code here, to run once:
+    Serial.begin(9600);
+  
+  for (int thisReading = 0; thisReading < numReadings; thisReading++) {
+    readings[thisReading] = 0;
+    
+  }
+  Serial.println("Readings Initialized.");
+
+  char customKey = 1;
+  String result = "";
+  Serial.print("Input: ");
+  while (true) {
+    
+    customKey = customKeypad.waitForKey();
+    if (customKey == '#') {
+      if (result != "") {
+        result = result.substring(0, result.length()-1);
+      } 
+      Serial.println();
+      Serial.print("Input: ");
+      Serial.print(result);
+    }
+    else if (customKey == 'C') {
+      Serial.println();
+      Serial.println("Input cleared.");
+      Serial.print("Input: ");
+      result = "";
+    }
+    else if (customKey == 'D') {
+      Serial.print("\n");
+      break;
+    }
+    else {
+      result += customKey;
+      Serial.print(customKey);
+    }
+   
+  }
+
+  targetWeight = result.toFloat();
+  firstWarn = targetWeight * 0.2;
+  secondWarn = targetWeight * 0.1;
+  thirdWarn = targetWeight * 0.05;
+  
+  Serial.print("Target weight set to ");
+  Serial.print(targetWeight);
+  Serial.println("g.");
+
+  pinMode(speaker, OUTPUT);
+  Serial.println("Speaker setup complete.");
+  
+  Serial.println("Entering scale mode.");
+  scale.begin(DOUT, CLK);
+  scale.set_scale();
+  scale.tare(); //Reset the scale to 0
+
+  long zero_factor = scale.read_average(); //Get a baseline reading
+  Serial.print("Zero factor: "); //This can be used to remove the need to tare the scale. Useful in permanent scale projects.
+  Serial.println(zero_factor);
+  
+}
+
+void loop() {
+  
+  // put your main code here, to run repeatedly:
+  scale.set_scale(calibration_factor); //Adjust to this calibration factor
+  
+  total = total - readings[readIndex];
+  readings[readIndex] = scale.get_units();
+  total = total + readings[readIndex];
+  readIndex = readIndex + 1;
+  
+  if (readIndex >= numReadings) {
+    // ...wrap around to the beginning:
+    readIndex = 0;
+  }
+
+  average = total / numReadings;
+  difference = targetWeight - average;
+  Serial.print("Average: ");
+  Serial.print(average);
+  Serial.print(" g. "); //Change this to kg and re-adjust the calibration factor if you follow SI units like a sane person
+  Serial.print("Difference: ");
+  Serial.print(difference);
+  Serial.println();
+
+  if(difference < 0) {
+      tone(speaker, 500, 100);
+  }
+  else if(difference < thirdWarn) {
+      tone(speaker, 500, 10);
+  }
+  else if(difference < secondWarn) {
+    count = count + 1;
+    if (count > 1) {
+      tone(speaker, 500, 10);
+      count = 0;
+    }
+  }
+  else if(difference < firstWarn) {
+    count = count + 1;
+    if (count > 2) {
+      tone(speaker, 500, 10);
+      count = 0;
+    }
+  }
+}
